@@ -78,6 +78,8 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
                         })
 
                 elif part.type.startswith('tool-'):
+                    if getattr(part, 'toolCallId', None) is None:
+                        continue
                     tool_call_id = part.toolCallId
                     tool_name = part.toolName or part.type.replace('tool-', '', 1)
 
@@ -107,6 +109,9 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
                             })
 
                         if part.state == 'output-available' and part.output is not None:
+                            print("\n--------------------------------")
+                            print(part.output, part.toolCallId, part.toolName)
+                            print("--------------------------------\n")
                             tool_result_messages.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,

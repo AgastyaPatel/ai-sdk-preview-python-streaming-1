@@ -5,14 +5,61 @@ import { MultimodalInput } from "@/components/multimodal-input";
 import { Overview } from "@/components/overview";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
 import { useChat, type CreateUIMessage, type UIMessage } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
 import { toast } from "sonner";
 import React from "react";
+
+// Custom transport that logs raw chunks before processing
+class LoggingChatTransport extends DefaultChatTransport<UIMessage> {
+  async sendMessages(
+    options: Parameters<DefaultChatTransport<UIMessage>["sendMessages"]>[0]
+  ) {
+    const { abortSignal, ...rest } = options;
+
+    // Build the request manually to intercept the raw response
+    const response = await fetch("/api/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: rest.messages }),
+      signal: abortSignal,
+    });
+
+    if (!response.ok || !response.body) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    // Create a pass-through stream that logs chunks
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    const loggingStream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) {
+          console.log("=== STREAM END ===");
+          controller.close();
+          return;
+        }
+        // Log the raw chunk
+        const text = decoder.decode(value, { stream: true });
+        console.log("RAW CHUNK:", text);
+        controller.enqueue(value);
+      },
+    });
+
+    // Process through the parent's stream processor
+    return this["processResponseStream"](loggingStream);
+  }
+}
+
+const loggingTransport = new LoggingChatTransport();
 
 export function Chat() {
   const chatId = "001";
 
   const { messages, setMessages, sendMessage, status, stop } = useChat({
     id: chatId,
+    transport: loggingTransport,
     onError: (error: Error) => {
       if (error.message.includes("Too many requests")) {
         toast.error(

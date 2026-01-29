@@ -214,6 +214,10 @@ def stream_text(
         if finish_reason is not None:
             finish_metadata["finishReason"] = finish_reason.replace("_", "-")
 
+
+        yield format_sse({"type":"source-url","sourceId":"https://example.com","url":"https://example.com"})
+        yield format_sse({"type":"source-document","sourceId":"https://example.com","mediaType":"file","title":"Title","content":"Content"})
+        
         if usage_data is not None:
             usage_payload = {
                 "promptTokens": usage_data.prompt_tokens,
