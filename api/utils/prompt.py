@@ -7,20 +7,6 @@ from pydantic import BaseModel, ConfigDict
 
 from .attachment import ClientAttachment
 
-
-class ToolInvocationState(str, Enum):
-    CALL = 'call'
-    PARTIAL_CALL = 'partial-call'
-    RESULT = 'result'
-
-class ToolInvocation(BaseModel):
-    state: ToolInvocationState
-    toolCallId: str
-    toolName: str
-    args: Any
-    result: Any
-
-
 class ClientMessagePart(BaseModel):
     type: str
     text: Optional[str] = None
@@ -33,17 +19,12 @@ class ClientMessagePart(BaseModel):
     input: Optional[Any] = None
     output: Optional[Any] = None
     args: Optional[Any] = None
-
     model_config = ConfigDict(extra="allow")
 
 
 class ClientMessage(BaseModel):
     role: str
-    content: Optional[str] = None
-    parts: Optional[List[ClientMessagePart]] = None
-    experimental_attachments: Optional[List[ClientAttachment]] = None
-    toolInvocations: Optional[List[ToolInvocation]] = None
-
+    content: Optional[List[ClientMessagePart] | str] = None
 
 def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatCompletionMessageParam]:
     openai_messages = []
@@ -53,11 +34,15 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
         tool_calls = []
         tool_result_messages = []
 
-        # Use toolInvocations as source of truth when present; only use parts for tools when absent
-        has_tool_invocations = bool(message.toolInvocations)
-
-        if message.parts:
-            for part in message.parts:
+        if message.content:
+            if type(message.content) == str and message.role == "system":
+                openai_message: ChatCompletionMessageParam = {
+                    "role": "system",
+                    "content": message.content,
+                }
+                openai_messages.append(openai_message)
+                continue
+            for part in message.content:
                 if part.type == 'text':
                     # Ensure empty strings default to ''
                     message_parts.append({
@@ -80,7 +65,7 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
                             'text': part.url
                         })
 
-                elif part.type.startswith('tool-') and not has_tool_invocations:
+                elif part.type.startswith('tool-'):
                     if getattr(part, 'toolCallId', None) is None:
                         continue
                     tool_call_id = part.toolCallId
@@ -112,9 +97,6 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
                             })
 
                         if part.state == 'output-available' and part.output is not None:
-                            print("\n--------------------------------")
-                            print(part.output, part.toolCallId, part.toolName)
-                            print("--------------------------------\n")
                             tool_result_messages.append({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
@@ -126,33 +108,6 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
                 'type': 'text',
                 'text': message.content
             })
-
-        if not message.parts and message.experimental_attachments:
-            for attachment in message.experimental_attachments:
-                if attachment.contentType.startswith('image'):
-                    message_parts.append({
-                        'type': 'image_url',
-                        'image_url': {
-                            'url': attachment.url
-                        }
-                    })
-
-                elif attachment.contentType.startswith('text'):
-                    message_parts.append({
-                        'type': 'text',
-                        'text': attachment.url
-                    })
-
-        if(message.toolInvocations):
-            for toolInvocation in message.toolInvocations:
-                tool_calls.append({
-                    "id": toolInvocation.toolCallId,
-                    "type": "function",
-                    "function": {
-                        "name": toolInvocation.toolName,
-                        "arguments": json.dumps(toolInvocation.args)
-                    }
-                })
 
         if message_parts:
             if len(message_parts) == 1 and message_parts[0]['type'] == 'text':
@@ -172,17 +127,6 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
             openai_message["tool_calls"] = tool_calls
 
         openai_messages.append(openai_message)
-
-        if(message.toolInvocations):
-            for toolInvocation in message.toolInvocations:
-                tool_message = {
-                    "role": "tool",
-                    "tool_call_id": toolInvocation.toolCallId,
-                    "content": json.dumps(toolInvocation.result),
-                }
-
-                openai_messages.append(tool_message)
-
         openai_messages.extend(tool_result_messages)
 
     return openai_messages
