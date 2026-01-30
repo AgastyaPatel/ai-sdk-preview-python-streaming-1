@@ -53,6 +53,9 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
         tool_calls = []
         tool_result_messages = []
 
+        # Use toolInvocations as source of truth when present; only use parts for tools when absent
+        has_tool_invocations = bool(message.toolInvocations)
+
         if message.parts:
             for part in message.parts:
                 if part.type == 'text':
@@ -77,7 +80,7 @@ def convert_to_openai_messages(messages: List[ClientMessage]) -> List[ChatComple
                             'text': part.url
                         })
 
-                elif part.type.startswith('tool-'):
+                elif part.type.startswith('tool-') and not has_tool_invocations:
                     if getattr(part, 'toolCallId', None) is None:
                         continue
                     tool_call_id = part.toolCallId
